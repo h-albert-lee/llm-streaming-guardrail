@@ -17,6 +17,6 @@ async def stream_vllm_request(payload: dict, retries: int = 3):
             break
         except Exception as e:
             attempt += 1
-            await asyncio.sleep(2 ** attempt * 0.1)
+            await asyncio.sleep(2 ** attempt * 0.1)  # 지수 백오프
             if attempt >= retries:
                 raise e
