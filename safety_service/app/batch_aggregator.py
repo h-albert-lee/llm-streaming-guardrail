@@ -1,43 +1,47 @@
-import time
-import threading
-from concurrent.futures import Future
+import asyncio
 from app.guardrail import LlamaGuardModel
 from app.config import BATCH_INTERVAL
 
-class BatchAggregator:
+class AsyncBatchAggregator:
     """
-    여러 텍스트 요청을 in-memory 큐에 쌓고, BATCH_INTERVAL마다 배치 추론을 수행하여
-    각 요청에 대해 Future 객체로 결과를 전달합니다.
+    asyncio.Queue를 사용하여 배치 추론을 수행하는 비동기 BatchAggregator.
+    BATCH_INTERVAL마다 큐에 있는 요청들을 모아 LlamaGuardModel.predict_batch를 호출합니다.
     """
     def __init__(self):
+        self.queue = asyncio.Queue()
         self.model = LlamaGuardModel()
-        self.queue = []  # (text, Future) 튜플 리스트
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-        self.worker_thread = threading.Thread(target=self._batch_worker)
-        self.worker_thread.start()
+        self._task = None
+        self._shutdown_event = asyncio.Event()
+    
+    async def start(self):
+        self._task = asyncio.create_task(self._batch_worker())
+    
+    async def shutdown(self):
+        self._shutdown_event.set()
+        if self._task:
+            await self._task
 
-    def enqueue(self, text: str) -> Future:
-        fut = Future()
-        with self.lock:
-            self.queue.append((text, fut))
-        return fut
+    async def enqueue(self, text: str) -> str:
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        await self.queue.put((text, fut))
+        return await fut
 
-    def _batch_worker(self):
-        while not self.stop_event.is_set():
-            time.sleep(BATCH_INTERVAL)
-            with self.lock:
-                if self.queue:
-                    texts, futures = [], []
-                    for (t, f) in self.queue:
-                        texts.append(t)
-                        futures.append(f)
-                    self.queue.clear()
-            if texts:
-                results = self.model.predict_batch(texts)
-                for f, r in zip(futures, results):
-                    f.set_result(r)
-
-    def shutdown(self):
-        self.stop_event.set()
-        self.worker_thread.join()
+    async def _batch_worker(self):
+        while not self._shutdown_event.is_set():
+            await asyncio.sleep(BATCH_INTERVAL)
+            items = []
+            while not self.queue.empty():
+                items.append(await self.queue.get())
+            if items:
+                texts, futures = zip(*items)
+                try:
+                    results = await asyncio.get_event_loop().run_in_executor(None, self.model.predict_batch, list(texts))
+                except Exception as e:
+                    for _, fut in items:
+                        if not fut.done():
+                            fut.set_exception(e)
+                    continue
+                for fut, res in zip(futures, results):
+                    if not fut.done():
+                        fut.set_result(res)

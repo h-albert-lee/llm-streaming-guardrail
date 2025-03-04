@@ -1,35 +1,33 @@
 import asyncio
 from fastapi import APIRouter, HTTPException
-from app.batch_aggregator import BatchAggregator
+from app.batch_aggregator import AsyncBatchAggregator
 
 router = APIRouter()
-batch_agg = BatchAggregator()
+batch_agg = AsyncBatchAggregator()
+
+@router.on_event("startup")
+async def startup_event():
+    await batch_agg.start()
 
 @router.on_event("shutdown")
-def shutdown_event():
-    batch_agg.shutdown()
+async def shutdown_event():
+    await batch_agg.shutdown()
 
 @router.post("/safecheck")
 async def safecheck(text: str):
-    """
-    단일 텍스트 안전성 검사.
-    최대 BATCH_INTERVAL 정도의 딜레이가 있을 수 있음.
-    """
     try:
-        fut = batch_agg.enqueue(text)
-        result = await asyncio.wrap_future(fut)
+        result = await batch_agg.enqueue(text)
         return {"result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/safecheck_batch")
 async def safecheck_batch(texts: list[str]):
-    """
-    다중 텍스트 안전성 검사.
-    """
     try:
-        futures = [batch_agg.enqueue(t) for t in texts]
-        results = await asyncio.gather(*(asyncio.wrap_future(f) for f in futures))
+        results = []
+        for text in texts:
+            res = await batch_agg.enqueue(text)
+            results.append(res)
         return {"results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

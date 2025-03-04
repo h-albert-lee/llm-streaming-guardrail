@@ -8,8 +8,3 @@ services:
     build: ./gateway_service
     ports:
       - "8000:8000"
-  # vLLM 서버는 별도 이미지로 대체하거나, 필요에 따라 추가합니다.
-  vllm_server:
-    image: your_vllm_server_image
-    ports:
-      - "8001:8001"
