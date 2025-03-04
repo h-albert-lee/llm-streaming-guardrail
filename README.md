@@ -2,6 +2,9 @@
 
 A microservices demo for streaming text generation with real‐time safety checks, following an Amazon Bedrock Guardrails pattern.
 
+![guardrail](https://github.com/user-attachments/assets/93e2e0ee-5566-42e1-b0a2-37ab5c2b4fa9)
+
+
 ## Components
 
 - **Gateway Service**  
