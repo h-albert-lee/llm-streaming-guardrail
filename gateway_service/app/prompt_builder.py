@@ -127,7 +127,10 @@ SAFETY_CATEGORIES_CONFIG = [
 
 def load_safety_categories() -> List[SafetyCategory]:
     try:
-        return [SafetyCategory(**cat) for cat in SAFETY_CATEGORIES_CONFIG]
+        logger.info("Loading safety categories...")
+        categories = [SafetyCategory(**cat) for cat in SAFETY_CATEGORIES_CONFIG]
+        logger.info("Loaded %d safety categories.", len(categories))
+        return categories
     except Exception as e:
         logger.exception("Failed to load safety categories: %s", e)
         raise
