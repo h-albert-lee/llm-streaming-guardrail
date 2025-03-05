@@ -35,7 +35,7 @@ async def startup_event():
     test_payload_vllm = {
         "model": VLLM_MODEL if VLLM_MODEL is not None else "test-model",
         "messages": [{"role": "user", "content": "ping"}],
-        "max_new_tokens": 1,
+        "max_tokens": 1,
         "stream": False
     }
     vllm_headers = {}
@@ -46,11 +46,10 @@ async def startup_event():
     # 테스트 요청: Safety vLLM 서버
     test_payload_safety = {
         "model": SAFETY_MODEL,
-        "messages": [
-            {"role": "system", "content": "Test safety check. Please classify as safe."},
+        "messages": [,
             {"role": "user", "content": "ping"}
         ],
-        "max_new_tokens": 1,
+        "max_tokens": 1,
         "stream": False
     }
     safety_headers = {}
