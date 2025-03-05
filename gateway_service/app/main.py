@@ -46,7 +46,7 @@ async def startup_event():
     # 테스트 요청: Safety vLLM 서버
     test_payload_safety = {
         "model": SAFETY_MODEL,
-        "messages": [,
+        "messages": [
             {"role": "user", "content": "ping"}
         ],
         "max_tokens": 1,
