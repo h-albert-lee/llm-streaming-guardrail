@@ -4,6 +4,7 @@ import asyncio
 import httpx
 import re
 import logging
+import uuid
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from app.config import (
@@ -18,6 +19,20 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
+
+def create_chunk_response(content: str) -> dict:
+    """
+    생성할 chunk를 OpenAI Compatible API 스트리밍 형식의 JSON 객체로 변환합니다.
+    각 chunk는 새로운 UUID와 현재 타임스탬프를 포함합니다.
+    """
+    return {
+        "id": "chat-" + uuid.uuid4().hex,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "choices": [
+            {"index": 0, "delta": {"content": content}}
+        ]
+    }
 
 class StreamingBufferManager:
     """
@@ -92,8 +107,8 @@ async def check_safety(text: str, retries: int = 3) -> bool:
     payload = {
         "model": SAFETY_MODEL,
         "messages": messages,
-        "max_new_tokens": 20,
-        "temperature": 0.7,
+        "max_tokens": 10,
+        "temperature": 1.0,
         "stream": False
     }
     target_url = SAFETY_SERVICE_URL
@@ -123,7 +138,8 @@ async def completions(request: Request):
     OpenAI Compatible API 엔드포인트.
     1) 클라이언트 요청을 받아 vLLM 서버에 스트리밍 요청을 보냅니다.
     2) 응답 청크를 BUFFER_SIZE 또는 FLUSH_INTERVAL에 따라 누적한 후, Safety 검증을 수행합니다.
-    3) 안전하면 그대로, unsafe면 "[UNSAFE]" 태그를 붙여 SSE로 전송합니다.
+    3) 안전하면 그대로, unsafe면 "[UNSAFE]" 태그를 붙여 SSE 형식으로 전송합니다.
+       이때, 전송하는 메시지는 delta 형식의 JSON 객체(OpenAI Compatible API)를 사용합니다.
     """
     logger.info("Received completions request.")
     payload = await request.json()
@@ -152,13 +168,15 @@ async def completions(request: Request):
                     if leftover:
                         safe = await check_safety(leftover)
                         if safe:
-                            yield f"data: {leftover}\n\n"
+                            response = create_chunk_response(leftover)
                         else:
-                            yield f"data: [UNSAFE] {leftover}\n\n"
-                    yield "data: [DONE]\n\n"
+                            response = create_chunk_response("[UNSAFE] " + leftover)
+                        yield f"data: {json.dumps(response)}\n\n"
+                    yield "data: " + json.dumps(create_chunk_response("[DONE]")) + "\n\n"
                     break
 
                 try:
+                    # vLLM의 streaming chunk는 delta 필드에 내용이 들어있습니다.
                     chunk_json = json.loads(data_str)
                 except json.JSONDecodeError as e:
                     logger.error("JSON decode error: %s - Raw line: %s", e, decoded)
@@ -169,12 +187,11 @@ async def completions(request: Request):
                     logger.debug("No choices found in chunk.")
                     continue
 
-                # 새 포맷: 내용은 choices[0]["delta"]["content"]에 있음.
+                # delta 기반으로 content 추출
                 delta = choices[0].get("delta")
                 if delta is not None:
                     content = delta.get("content", "")
                 else:
-                    # 만약 delta가 없으면 기존 "message" 필드를 사용
                     message = choices[0].get("message", {})
                     content = message.get("content", "")
                 logger.debug("Extracted content: %s", content)
@@ -184,9 +201,10 @@ async def completions(request: Request):
                     logger.info("Buffer chunk ready for safety check: %s", buffered_chunk)
                     safe = await check_safety(buffered_chunk)
                     if safe:
-                        yield f"data: {buffered_chunk}\n\n"
+                        response = create_chunk_response(buffered_chunk)
                     else:
-                        yield f"data: [UNSAFE] {buffered_chunk}\n\n"
+                        response = create_chunk_response("[UNSAFE] " + buffered_chunk)
+                    yield f"data: {json.dumps(response)}\n\n"
 
             if FLUSH_INTERVAL > 0:
                 now = time.time()
@@ -196,10 +214,25 @@ async def completions(request: Request):
                         logger.info("Time-based flush, checking safety for: %s", leftover)
                         safe = await check_safety(leftover)
                         if safe:
-                            yield f"data: {leftover}\n\n"
+                            response = create_chunk_response(leftover)
                         else:
-                            yield f"data: [UNSAFE] {leftover}\n\n"
+                            response = create_chunk_response("[UNSAFE] " + leftover)
+                        yield f"data: {json.dumps(response)}\n\n"
                     last_flush_time = now
             await asyncio.sleep(0.01)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+def create_chunk_response(content: str) -> dict:
+    """
+    OpenAI Compatible API 스트리밍 응답 형식으로 변환합니다.
+    각 응답은 delta 필드에 content를 포함한 JSON 객체입니다.
+    """
+    return {
+        "id": "chat-" + uuid.uuid4().hex,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "choices": [
+            {"index": 0, "delta": {"content": content}}
+        ]
+    }
