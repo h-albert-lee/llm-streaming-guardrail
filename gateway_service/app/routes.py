@@ -222,17 +222,3 @@ async def completions(request: Request):
             await asyncio.sleep(0.01)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-def create_chunk_response(content: str) -> dict:
-    """
-    OpenAI Compatible API 스트리밍 응답 형식으로 변환합니다.
-    각 응답은 delta 필드에 content를 포함한 JSON 객체입니다.
-    """
-    return {
-        "id": "chat-" + uuid.uuid4().hex,
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "choices": [
-            {"index": 0, "delta": {"content": content}}
-        ]
-    }
