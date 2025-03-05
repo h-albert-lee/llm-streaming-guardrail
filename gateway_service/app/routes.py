@@ -50,57 +50,44 @@ def parse_safety_output(content: str) -> bool:
         return False
     if safe_pattern.search(content):
         return True
-    return True  # 기본적으로 safe
+    return True  # 기본 safe
 
 async def check_safety(text: str, retries: int = 3) -> bool:
     """
     Safety 검증을 수행합니다.
-    SAFETY_MODE에 따라:
-      - "separate": 별도의 Safety Service에 호출
-      - "vllm": vLLM 서버에 "llama-guard" 모델로 호출
+    여기서는 SAFETY_MODE가 "vllm"이든 "separate"이든 동일하게,
+    SAFETY_SERVICE_URL, SAFETY_MODEL, SAFETY_API_KEY를 사용하여 safety vLLM 서버에 호출합니다.
     재시도 로직 포함.
     """
     headers = {}
-    if SAFETY_MODE != "vllm" and SAFETY_API_KEY:
+    if SAFETY_API_KEY:
         headers["Authorization"] = f"Bearer {SAFETY_API_KEY}"
-    if SAFETY_MODE == "vllm":
-        try:
-            from app.prompt_builder import load_safety_categories
-            safety_categories = load_safety_categories()
-            categories_str = "\n".join(
-                [f"S{i+1}: {cat.name} - {cat.description}" for i, cat in enumerate(safety_categories)]
-            )
-        except Exception as e:
-            logger.exception("Failed to load safety categories: %s", e)
-            categories_str = "No safety categories available."
-        system_message = (
-            "Classify the given prompt as safe or unsafe. For unsafe responses, specify the category (e.g., S1, S13) "
-            "and provide reasoning behind your choice. Below is the safety policy with the following categories:\n"
-            f"{categories_str}"
+    try:
+        from app.prompt_builder import load_safety_categories
+        safety_categories = load_safety_categories()
+        categories_str = "\n".join(
+            [f"S{i+1}: {cat.name} - {cat.description}" for i, cat in enumerate(safety_categories)]
         )
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": f"User: {text}"}
-        ]
-        payload = {
-            "model": SAFETY_MODEL,
-            "messages": messages,
-            "max_new_tokens": 20,
-            "temperature": 0.7,
-            "stream": False
-        }
-        target_url = VLLM_SERVER_URL
-    else:
-        payload = {
-            "model": SAFETY_MODEL,
-            "messages": [
-                {"role": "system", "content": "You are a safety guard. Evaluate the following text and respond with a single word: safe or unsafe, optionally followed by additional text."},
-                {"role": "user", "content": text}
-            ],
-            "max_tokens": 20,
-            "stream": False
-        }
-        target_url = SAFETY_SERVICE_URL
+    except Exception as e:
+        logger.exception("Failed to load safety categories: %s", e)
+        categories_str = "No safety categories available."
+    system_message = (
+        "Classify the given prompt as safe or unsafe. For unsafe responses, specify the category (e.g., S1, S13) "
+        "and provide reasoning behind your choice. Below is the safety policy with the following categories:\n"
+        f"{categories_str}"
+    )
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": f"User: {text}"}
+    ]
+    payload = {
+        "model": SAFETY_MODEL,
+        "messages": messages,
+        "max_new_tokens": 20,
+        "temperature": 0.7,
+        "stream": False
+    }
+    target_url = SAFETY_SERVICE_URL
 
     attempt = 0
     while attempt < retries:
@@ -117,7 +104,6 @@ async def check_safety(text: str, retries: int = 3) -> bool:
             logger.warning("Safety check attempt %d failed: %s", attempt, e)
             await asyncio.sleep(2 ** attempt * 0.1)
             if attempt >= retries:
-                # 재시도 실패 시 기본 safe로 판단
                 logger.error("Safety check failed after %d attempts, defaulting to safe.", attempt)
                 return True
 
@@ -179,7 +165,6 @@ async def completions(request: Request):
                     else:
                         yield f"data: [UNSAFE] {buffered_chunk}\n\n"
 
-            # 시간 기반 flush 처리
             if FLUSH_INTERVAL > 0:
                 now = time.time()
                 if now - last_flush_time >= FLUSH_INTERVAL:

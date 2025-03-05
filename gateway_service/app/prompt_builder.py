@@ -1,8 +1,6 @@
 import logging
 from dataclasses import dataclass
-from string import Template
 from typing import List
-from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -10,14 +8,6 @@ logger = logging.getLogger(__name__)
 class SafetyCategory:
     name: str
     description: str
-
-
-def load_safety_categories() -> List[SafetyCategory]:
-    try:
-        return [SafetyCategory(**cat) for cat in SAFETY_CATEGORIES_CONFIG]
-    except Exception as e:
-        logger.exception("Failed to load safety categories: %s", e)
-        raise
 
 SAFETY_CATEGORIES_CONFIG = [
     {
@@ -134,3 +124,10 @@ SAFETY_CATEGORIES_CONFIG = [
         )
     },
 ]
+
+def load_safety_categories() -> List[SafetyCategory]:
+    try:
+        return [SafetyCategory(**cat) for cat in SAFETY_CATEGORIES_CONFIG]
+    except Exception as e:
+        logger.exception("Failed to load safety categories: %s", e)
+        raise
