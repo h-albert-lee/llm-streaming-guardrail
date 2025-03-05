@@ -6,7 +6,10 @@ import re
 import logging
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
-from app.config import SAFETY_SERVICE_URL, BUFFER_SIZE, FLUSH_INTERVAL, SAFETY_MODE, VLLM_SERVER_URL
+from app.config import (
+    SAFETY_SERVICE_URL, BUFFER_SIZE, FLUSH_INTERVAL, SAFETY_MODE,
+    VLLM_SERVER_URL, SAFETY_MODEL, SAFETY_API_KEY
+)
 from app.vllm_client import stream_vllm_request
 from app.dependencies import verify_api_key
 
@@ -47,7 +50,7 @@ def parse_safety_output(content: str) -> bool:
         return False
     if safe_pattern.search(content):
         return True
-    return True  # 기본적으로 safe로 판단
+    return True  # 기본적으로 safe
 
 async def check_safety(text: str, retries: int = 3) -> bool:
     """
@@ -57,7 +60,9 @@ async def check_safety(text: str, retries: int = 3) -> bool:
       - "vllm": vLLM 서버에 "llama-guard" 모델로 호출
     재시도 로직 포함.
     """
-    # vLLM 모드: 내부 프롬프트에 안전 정책 및 카테고리 정보를 포함
+    headers = {}
+    if SAFETY_MODE != "vllm" and SAFETY_API_KEY:
+        headers["Authorization"] = f"Bearer {SAFETY_API_KEY}"
     if SAFETY_MODE == "vllm":
         try:
             from app.prompt_builder import load_safety_categories
@@ -78,19 +83,18 @@ async def check_safety(text: str, retries: int = 3) -> bool:
             {"role": "user", "content": f"User: {text}"}
         ]
         payload = {
-            "model": "llama-guard",
+            "model": SAFETY_MODEL,
             "messages": messages,
-            "max_tokens": 20,
-            "temperature": 1.0,
+            "max_new_tokens": 20,
+            "temperature": 0.7,
             "stream": False
         }
         target_url = VLLM_SERVER_URL
     else:
-        # "separate" 모드: 별도 Safety Service에 호출
         payload = {
-            "model": "llama-guard",
+            "model": SAFETY_MODEL,
             "messages": [
-                {"role": "system", "content": "Classify the given prompt as safe or unsafe. For unsafe responses, specify the category (e.g., S1, S13)"},
+                {"role": "system", "content": "You are a safety guard. Evaluate the following text and respond with a single word: safe or unsafe, optionally followed by additional text."},
                 {"role": "user", "content": text}
             ],
             "max_tokens": 20,
@@ -101,29 +105,29 @@ async def check_safety(text: str, retries: int = 3) -> bool:
     attempt = 0
     while attempt < retries:
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
                 resp = await client.post(target_url, json=payload)
             if resp.status_code != 200:
                 raise Exception(f"Safety Service HTTP {resp.status_code}")
             data = resp.json()
             content = data["choices"][0]["message"]["content"].strip()
-            logger.info("Safety output: %s", content)
             return parse_safety_output(content)
         except Exception as e:
-            logger.error("Safety check failed on attempt %d: %s", attempt+1, e)
             attempt += 1
+            logger.warning("Safety check attempt %d failed: %s", attempt, e)
             await asyncio.sleep(2 ** attempt * 0.1)
             if attempt >= retries:
                 # 재시도 실패 시 기본 safe로 판단
-                logger.warning("Safety check defaulting to safe after %d attempts.", retries)
+                logger.error("Safety check failed after %d attempts, defaulting to safe.", attempt)
                 return True
 
 @router.post("/v1/chat/completions")
 async def completions(request: Request):
     """
     OpenAI Compatible API 엔드포인트.
-    1) 클라이언트 요청을 받아 vLLM 서버에 스트리밍 요청을 보냅니다.
-    2) 응답 청크를 BUFFER_SIZE 또는 FLUSH_INTERVAL에 따라 누적하여 Safety 검증을 수행합니다.
+    1) 클라이언트 요청을 받아 vLLM 서버에 스트리밍 요청을 보냄.
+    2) 응답 청크를 BUFFER_SIZE 또는 FLUSH_INTERVAL에 따라 누적하여,
+       Safety 검증을 수행합니다.
     3) 안전하면 그대로, unsafe면 "[UNSAFE]" 태그를 붙여 SSE로 전송합니다.
     """
     payload = await request.json()
