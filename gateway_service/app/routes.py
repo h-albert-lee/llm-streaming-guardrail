@@ -12,6 +12,7 @@ from app.config import (
 )
 from app.vllm_client import stream_vllm_request
 from app.dependencies import verify_api_key
+from app.prompt_builder import load_safety_categories
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -64,14 +65,13 @@ def parse_safety_output(content: str) -> bool:
 async def check_safety(text: str, retries: int = 3) -> bool:
     """
     Safety 검증을 수행합니다.
-    SAFETY_MODE에 상관없이, safety vLLM 서버 호출 시 SAFETY_SERVICE_URL, SAFETY_MODEL, SAFETY_API_KEY를 사용합니다.
-    재시도 로직 포함.
+    클라이언트의 텍스트(버퍼 청크)를 safety vLLM 서버에 전달하여 검증합니다.
+    SAFETY_SERVICE_URL, SAFETY_MODEL, SAFETY_API_KEY를 사용하며, 재시도 로직을 포함합니다.
     """
     headers = {}
     if SAFETY_API_KEY:
         headers["Authorization"] = f"Bearer {SAFETY_API_KEY}"
     try:
-        from app.prompt_builder import load_safety_categories
         safety_categories = load_safety_categories()
         categories_str = "\n".join(
             [f"S{i+1}: {cat.name} - {cat.description}" for i, cat in enumerate(safety_categories)]
@@ -99,7 +99,7 @@ async def check_safety(text: str, retries: int = 3) -> bool:
     attempt = 0
     while attempt < retries:
         try:
-            logger.info("Sending safety check request (attempt %d) to %s", attempt+1, target_url)
+            logger.info("Sending safety check request (attempt %d) to %s", attempt + 1, target_url)
             async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
                 resp = await client.post(target_url, json=payload)
             if resp.status_code != 200:
@@ -120,9 +120,8 @@ async def check_safety(text: str, retries: int = 3) -> bool:
 async def completions(request: Request):
     """
     OpenAI Compatible API 엔드포인트.
-    1) 클라이언트 요청을 받아 vLLM 서버에 스트리밍 요청을 보냄.
-    2) 응답 청크를 BUFFER_SIZE 또는 FLUSH_INTERVAL에 따라 누적하여,
-       Safety 검증을 수행합니다.
+    1) 클라이언트 요청을 받아 vLLM 서버에 스트리밍 요청을 보냅니다.
+    2) 응답 청크를 BUFFER_SIZE 또는 FLUSH_INTERVAL에 따라 누적한 후, Safety 검증을 수행합니다.
     3) 안전하면 그대로, unsafe면 "[UNSAFE]" 태그를 붙여 SSE로 전송합니다.
     """
     logger.info("Received completions request.")
@@ -181,7 +180,6 @@ async def completions(request: Request):
                     else:
                         yield f"data: [UNSAFE] {buffered_chunk}\n\n"
 
-            # 시간 기반 flush 처리
             if FLUSH_INTERVAL > 0:
                 now = time.time()
                 if now - last_flush_time >= FLUSH_INTERVAL:
