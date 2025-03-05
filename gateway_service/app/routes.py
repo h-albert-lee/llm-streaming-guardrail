@@ -85,6 +85,7 @@ async def check_safety(text: str, retries: int = 3) -> bool:
         f"{categories_str}"
     )
     messages = [
+        {"role": "user", "content": ""},
         {"role": "system", "content": system_message},
         {"role": "user", "content": f"User: {text}"}
     ]
@@ -99,7 +100,7 @@ async def check_safety(text: str, retries: int = 3) -> bool:
     attempt = 0
     while attempt < retries:
         try:
-            logger.info("Sending safety check request (attempt %d) to %s", attempt + 1, target_url)
+            logger.info("Sending safety check request (attempt %d) to %s", attempt+1, target_url)
             async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
                 resp = await client.post(target_url, json=payload)
             if resp.status_code != 200:
@@ -167,8 +168,15 @@ async def completions(request: Request):
                 if not choices:
                     logger.debug("No choices found in chunk.")
                     continue
-                message = choices[0].get("message", {})
-                content = message.get("content", "")
+
+                # 새 포맷: 내용은 choices[0]["delta"]["content"]에 있음.
+                delta = choices[0].get("delta")
+                if delta is not None:
+                    content = delta.get("content", "")
+                else:
+                    # 만약 delta가 없으면 기존 "message" 필드를 사용
+                    message = choices[0].get("message", {})
+                    content = message.get("content", "")
                 logger.debug("Extracted content: %s", content)
 
                 buffered_chunk = buffer_manager.add(content)
