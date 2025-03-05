@@ -66,8 +66,8 @@ def parse_safety_output(content: str) -> bool:
     - "\n\nsafe"가 있으면 safe로 판단
     """
     logger.debug("Parsing safety output: %s", content)
-    unsafe_pattern = re.compile(r"\n\nunsafe(?:\nS(?:[1-9]|1[0-5]))?", re.IGNORECASE)
-    safe_pattern = re.compile(r"\n\nsafe", re.IGNORECASE)
+    unsafe_pattern = re.compile(r"unsafe(?:\nS(?:[1-9]|1[0-5]))?", re.IGNORECASE)
+    safe_pattern = re.compile(r"safe", re.IGNORECASE)
     if unsafe_pattern.search(content):
         logger.info("Safety output indicates unsafe.")
         return False
