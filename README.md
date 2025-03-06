@@ -4,13 +4,7 @@ A microservices demo for streaming text generation with real‐time safety check
 
 ![guardrail](https://github.com/user-attachments/assets/93e2e0ee-5566-42e1-b0a2-37ab5c2b4fa9)
 
-## Components
-
-- **Gateway Service**  
-  Receives OpenAI-compatible requests, streams responses from a vLLM server, buffers small text chunks (default 5 characters), and checks each chunk’s safety. Unsafe chunks are marked with “[UNSAFE]” in the SSE output.
-
-- **Safety Service**  
-  Uses a LLaMA Guard generative model to perform batch safety inference (default batch interval: 50ms) on incoming text chunks and returns a verdict ("safe" or "unsafe").
+Receives OpenAI-compatible requests, streams responses from a vLLM server, buffers small text chunks (default 5 characters), and checks each chunk’s safety. Unsafe chunks are marked with “[UNSAFE]” in the SSE output.
 
 ## Quick Start
 
@@ -38,16 +32,10 @@ A microservices demo for streaming text generation with real‐time safety check
 
 ### 2. Run the Services
 
-Use Docker Compose:
+Use Uvicorn:
 ```bash
-docker-compose up --build
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
-
-Or run each service separately:
-
-- **Safety Service** on port **8002** (optional)
-- **Gateway Service** on port **8000**
-- Ensure your **vLLM server** is running on port **8001**
 
 ### 3. Test the API
 Send a POST request to `http://localhost:8000/v1/chat/completions` with an OpenAI-compatible payload. The response will be streamed with real-time safety checks applied.
